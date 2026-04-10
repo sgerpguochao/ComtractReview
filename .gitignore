@@ -6,3 +6,16 @@
 *.key
 ~$*
 .claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local DB / uploads
+*.db
+backend/storage/
+
+# Node / frontend build
+node_modules/
+dist/
