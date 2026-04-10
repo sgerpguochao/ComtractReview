@@ -176,7 +176,7 @@ export async function uploadFile(file: File, dimensions: string[]): Promise<{ ta
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || err.detail || `Upload failed: ${res.status}`);
+    throw new Error(err.message || `Upload failed: ${res.status}`);
   }
   return res.json();
 }
@@ -213,7 +213,7 @@ export async function submitReview(
   if (options?.modified_content) body.modified_content = options.modified_content;
   const res = await fetch(`${API_BASE}/tasks/${taskId}/risks/${riskId}/review`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-User-Id': 'frontend_user' },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Review failed: ${res.status}`);
@@ -226,7 +226,7 @@ export async function batchReview(
 ): Promise<{ updated_count: number; remaining_pending: number }> {
   const res = await fetch(`${API_BASE}/tasks/${taskId}/reviews/batch`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-User-Id': 'frontend_user' },
     body: JSON.stringify({ reviews }),
   });
   if (!res.ok) throw new Error(`Batch review failed: ${res.status}`);

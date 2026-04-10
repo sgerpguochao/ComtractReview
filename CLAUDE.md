@@ -88,6 +88,23 @@ ContractReview 是一个基于 AI 的合同审查系统，利用 LangChain + LLM
 
 ### 项目启动命令汇总
 
+#### 一键启动/停止（推荐）
+
+双击运行或命令行执行：
+```bash
+# 启动项目（后端 + 前端）
+start.bat
+
+# 停止项目
+stop.bat
+```
+
+启动后访问：
+- 后端 API：http://localhost:8000
+- 前端界面：http://localhost:3000
+
+#### 手动启动
+
 **后端**（先激活 conda 环境）：
 ```bash
 # Windows bash
@@ -106,14 +123,17 @@ node node_modules/vite/bin/vite.js --port 3000
 ```
 
 **首次安装依赖**：
+
+**后端**：
 ```bash
-# 后端
 source "D:/sorfware_install/python3.8_install/etc/profile.d/conda.sh"
 conda activate contractreview
 cd G:\ComtractReview\backend
 pip install -r requirements.txt
+```
 
-# 前端
+**前端**：
+```bash
 cd G:\ComtractReview\frontend
 npm install
 ```

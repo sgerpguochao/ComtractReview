@@ -19,3 +19,6 @@ backend/storage/
 # Node / frontend build
 node_modules/
 dist/
+
+# Logs
+*.log

@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import APIRouter, Header, Depends
+from fastapi import APIRouter, Header, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +8,7 @@ from app.services import task_service
 from app.services.review_service import (
     submit_review, get_risk_item_by_id, get_all_risk_items, risk_item_to_response
 )
+from app.services.workflow_service import check_and_finalize_review
 from app.schemas.risk import ReviewRequest, BatchReviewRequest, ReviewResponse, BatchReviewResponse
 
 router = APIRouter(prefix="/api/v1", tags=["review"])
@@ -19,6 +20,7 @@ async def submit_single_review(
     risk_id: str,
     body: ReviewRequest,
     x_user_id: Optional[str] = Header(None),
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
 ):
     if not x_user_id:
@@ -65,6 +67,9 @@ async def submit_single_review(
     remaining = await task_service.count_pending_high_risks(db, task_id)
     await db.commit()
 
+    if remaining == 0 and background_tasks:
+        background_tasks.add_task(check_and_finalize_review, task_id)
+
     return {
         "risk_id": risk_id,
         "human_review_status": result["human_review_status"],
@@ -78,6 +83,7 @@ async def batch_review(
     task_id: str,
     body: BatchReviewRequest,
     x_user_id: Optional[str] = Header(None),
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
 ):
     if not x_user_id:
@@ -113,6 +119,9 @@ async def batch_review(
 
     remaining = await task_service.count_pending_high_risks(db, task_id)
     await db.commit()
+
+    if remaining == 0 and background_tasks:
+        background_tasks.add_task(check_and_finalize_review, task_id)
 
     return {
         "updated_count": updated,

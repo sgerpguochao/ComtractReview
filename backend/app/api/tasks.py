@@ -1,8 +1,9 @@
 import os
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,7 @@ from app.schemas.task import (
 from app.services import file_service, task_service
 from app.services.sse_manager import sse_manager, format_sse
 from app.services.review_service import get_all_risk_items, risk_item_to_response
+from app.services.workflow_service import run_review_workflow
 
 from app.config import settings
 
@@ -25,10 +27,15 @@ router = APIRouter(prefix="/api/v1", tags=["tasks"])
 @router.post("/tasks/upload")
 async def upload_task(
     file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
     review_dimensions: Optional[str] = Form(None),
     client_request_id: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
+    LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "workflow.log")
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(f"[upload] endpoint reached, file={file.filename}\n")
+        f.flush()
     # Validate file
     valid, error_code = file_service.validate_file(file)
     if not valid:
@@ -69,6 +76,16 @@ async def upload_task(
 
     # Save file
     storage_path = await file_service.save_file(file, task.id)
+
+    # Trigger review workflow in background
+    import sys
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(f"[upload] adding background task for {task.id}\n")
+        f.flush()
+    background_tasks.add_task(run_review_workflow, task.id)
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(f"[upload] background task added, returning response\n")
+        f.flush()
 
     return {
         "task_id": task.id,
