@@ -14,7 +14,7 @@ set FRONTEND_DIR=%SCRIPT_DIR%frontend
 
 :: Conda path
 set CONDA_ROOT=D:\sorfware_install\python3.8_install
-set CONDA_ENV=contractreview
+set CONDA_ENV=%CONDA_ROOT%\envs\contractreview
 
 echo [1/3] Starting Backend Server...
 echo       - Conda Env: %CONDA_ENV%
@@ -22,7 +22,7 @@ echo       - Port: 8000
 echo.
 
 :: Start backend in a new window
-start "ContractReview - Backend (Port 8000)" cmd /k "call \"%CONDA_ROOT%\Scripts\activate.bat\" && conda activate %CONDA_ENV% && cd /d %BACKEND_DIR% && python main.py"
+start "ContractReview - Backend (Port 8000)" cmd /k "cd /d G:\ComtractReview\backend && D:\sorfware_install\python3.8_install\envs\contractreview\python.exe main.py"
 
 timeout /t 3 /nobreak >nul
 
