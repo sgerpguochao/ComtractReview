@@ -1,10 +1,10 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { Upload, FileUp, RefreshCw, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Header } from './Header';
 import {
-  MOCK_TASKS,
+  fetchTaskList, uploadFile,
   STATUS_LABELS,
   API_ENDPOINTS,
   type Task,
@@ -30,8 +30,16 @@ export function HomePage() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [dimensions, setDimensions] = useState<string[]>(['risk_review']);
-  const [tasks] = useState<Task[]>(MOCK_TASKS);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(true);
   const [visibleCount, setVisibleCount] = useState(5);
+
+  useEffect(() => {
+    fetchTaskList()
+      .then(setTasks)
+      .catch(err => toast.error(`加载任务列表失败: ${err.message}`))
+      .finally(() => setTasksLoading(false));
+  }, []);
 
   const validateFile = (file: File): string | null => {
     const ext = file.name.split('.').pop()?.toLowerCase();
@@ -57,23 +65,20 @@ export function HomePage() {
     if (!selectedFile) return;
     setUploading(true);
     setUploadProgress(0);
-    // 模拟上传 — 实际调用 POST /api/v1/tasks/upload (已定义)
-    console.log(`[API] ${API_ENDPOINTS.upload.method} ${API_ENDPOINTS.upload.path}`, { file: selectedFile.name, dimensions });
-    const interval = setInterval(() => {
-      setUploadProgress(p => {
-        if (p >= 100) { clearInterval(interval); return 100; }
-        return p + 10;
-      });
-    }, 200);
-    setTimeout(() => {
-      clearInterval(interval);
+    try {
+      const result = await uploadFile(selectedFile, dimensions);
       setUploadProgress(100);
       setUploading(false);
       setSelectedFile(null);
       toast.success('上传成功，正在跳转...');
-      // 模拟返回 task_id
-      navigate('/review/task-004');
-    }, 2200);
+      navigate(`/review/${result.task_id}`);
+      // Refresh task list
+      fetchTaskList().then(setTasks).catch(() => {});
+    } catch (err: any) {
+      setUploading(false);
+      setUploadProgress(0);
+      toast.error(err.message || '上传失败');
+    }
   };
 
   const toggleDimension = (dim: string) => {
@@ -167,7 +172,11 @@ export function HomePage() {
           </div>
 
           <div className="divide-y divide-border">
-            {tasks.slice(0, visibleCount).map(task => {
+            {tasksLoading ? (
+              <p className="py-4 text-center text-[0.875rem] text-gray-400">加载中...</p>
+            ) : tasks.length === 0 ? (
+              <p className="py-4 text-center text-[0.875rem] text-gray-400">暂无审查记录</p>
+            ) : tasks.slice(0, visibleCount).map(task => {
               const sc = STATUS_COLORS[task.status] || { bg: '#F3F4F6', color: '#6B7280' };
               return (
                 <div

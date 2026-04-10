@@ -64,7 +64,7 @@ ContractReview 是一个基于 AI 的合同审查系统，利用 LangChain + LLM
 ### 技术栈约束
 
 - 后端：Python 3.11 + conda 虚拟环境（`contractreview`）+ `.env` 配置管理
-- 前端：待 09_frontend_plan 阶段确定
+- 前端：React 18 + Vite 6 + Tailwind CSS 4 + shadcn/ui (Radix UI)
 - AI 框架：LangChain / LangGraph
 - 文档：Markdown
 
@@ -76,3 +76,44 @@ ContractReview 是一个基于 AI 的合同审查系统，利用 LangChain + LLM
 - **环境路径**：`D:\sorfware_install\python3.8_install\envs\contractreview`
 - **.env 配置**：后端所有配置通过 `backend/.env` 管理，参考 `backend/.env.example` 模板
 - **依赖安装**：`pip install` 在激活环境后执行，依赖列表由 `backend/requirements.txt` 管理
+
+### 前端环境
+
+- **工作目录**：`G:\ComtractReview\frontend`
+- **Node.js 版本**：v24+（npm 11+）
+- **依赖安装**：在 `frontend/` 目录下执行 `npm install`
+- **启动开发服务器**：`node node_modules/vite/bin/vite.js --port 3000`（在 `frontend/` 目录下执行）
+- **构建生产版本**：`npx vite build`（在 `frontend/` 目录下执行）
+- **开发服务器地址**：`http://localhost:3000`
+
+### 项目启动命令汇总
+
+**后端**（先激活 conda 环境）：
+```bash
+# Windows bash
+source "D:/sorfware_install/python3.8_install/etc/profile.d/conda.sh"
+conda activate contractreview
+cd G:\ComtractReview\backend
+python main.py
+# 服务地址: http://localhost:8000
+```
+
+**前端**：
+```bash
+cd G:\ComtractReview\frontend
+node node_modules/vite/bin/vite.js --port 3000
+# 服务地址: http://localhost:3000
+```
+
+**首次安装依赖**：
+```bash
+# 后端
+source "D:/sorfware_install/python3.8_install/etc/profile.d/conda.sh"
+conda activate contractreview
+cd G:\ComtractReview\backend
+pip install -r requirements.txt
+
+# 前端
+cd G:\ComtractReview\frontend
+npm install
+```

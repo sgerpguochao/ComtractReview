@@ -1,5 +1,6 @@
+import { useState, useEffect } from 'react';
 import { X, FileText, CheckCircle2, XCircle, Pencil, Save, Zap, Play } from 'lucide-react';
-import { MOCK_AUDIT_LOG, API_ENDPOINTS, type AuditLogEntry } from '../api';
+import { fetchAuditLog, API_ENDPOINTS, type AuditLogEntry } from '../api';
 
 const ICONS: Record<string, React.ReactNode> = {
   doc: <FileText className="w-4 h-4 text-blue-500" />,
@@ -12,10 +13,18 @@ const ICONS: Record<string, React.ReactNode> = {
 };
 
 export function AuditLogDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }) {
-  console.log(`[API] GET ${API_ENDPOINTS.auditLog.path.replace('{task_id}', taskId)} (${API_ENDPOINTS.auditLog.status})`);
+  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchAuditLog(taskId)
+      .then(setLogs)
+      .catch(() => setLogs([]))
+      .finally(() => setLoading(false));
+  }, [taskId]);
 
   const grouped: Record<string, AuditLogEntry[]> = {};
-  MOCK_AUDIT_LOG.forEach(entry => {
+  logs.forEach(entry => {
     const date = new Date(entry.timestamp).toLocaleDateString('zh-CN');
     if (!grouped[date]) grouped[date] = [];
     grouped[date].push(entry);
@@ -30,7 +39,11 @@ export function AuditLogDrawer({ taskId, onClose }: { taskId: string; onClose: (
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {Object.entries(grouped).map(([date, entries]) => (
+          {loading ? (
+            <p className="text-center text-[0.875rem] text-gray-400 py-8">加载中...</p>
+          ) : Object.keys(grouped).length === 0 ? (
+            <p className="text-center text-[0.875rem] text-gray-400 py-8">暂无操作记录</p>
+          ) : Object.entries(grouped).map(([date, entries]) => (
             <div key={date} className="mb-6">
               <p className="text-[0.8125rem] text-gray-400 mb-3" style={{ fontWeight: 500 }}>{date}</p>
               <div className="flex flex-col gap-0">

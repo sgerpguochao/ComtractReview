@@ -9,8 +9,10 @@ import { Header } from './Header';
 import { AuditLogDrawer } from './AuditLogDrawer';
 import { EditDrawer } from './EditDrawer';
 import {
-  MOCK_TASKS, MOCK_RISK_ITEMS, API_ENDPOINTS,
-  CATEGORY_LABELS, STATUS_LABELS, REVIEW_STATUS_CONFIG, REJECT_REASONS,
+  fetchTaskDetail, cancelTask as cancelTaskApi, fetchReviewResult,
+  submitReview as submitReviewApi, batchReview as batchReviewApi,
+  generateReport as generateReportApi, downloadReportBlob,
+  API_ENDPOINTS, STATUS_LABELS, REVIEW_STATUS_CONFIG, REJECT_REASONS, CATEGORY_LABELS,
   type Task, type TaskStatus, type RiskItem, type RiskLevel, type HumanReviewStatus, type RejectReason,
 } from '../api';
 
@@ -215,13 +217,17 @@ function RiskItemCard({ item, selected, onSelect, onAction }: {
   };
   const lc = levelColors[item.level];
 
-  const handleRejectSubmit = () => {
+  const handleRejectSubmit = async () => {
     if (!rejectReason) { toast.error('请选择驳回原因'); return; }
-    console.log(`[API] PUT ${API_ENDPOINTS.submitReview.path.replace('{task_id}', item.task_id).replace('{risk_id}', item.id)}`, { action: 'rejected', reason: rejectReason, comment: rejectComment });
-    onAction('reject', item);
-    setShowReject(false);
-    setRejectReason('');
-    setRejectComment('');
+    try {
+      await submitReviewApi(item.task_id, item.id, 'reject', { comment: rejectComment });
+      onAction('reject', item);
+      setShowReject(false);
+      setRejectReason('');
+      setRejectComment('');
+    } catch (err: any) {
+      toast.error(`驳回失败: ${err.message}`);
+    }
   };
 
   return (
@@ -309,14 +315,18 @@ function RiskItemCard({ item, selected, onSelect, onAction }: {
           {isPending && !showReject && (
             <div className="border-t border-gray-200 px-4 py-3 flex items-center gap-3">
               <button
-                onClick={() => {
-                  console.log(`[API] PUT ${API_ENDPOINTS.submitReview.path.replace('{task_id}', item.task_id).replace('{risk_id}', item.id)}`, { action: 'approved' });
-                  if (item.confidence >= 70) {
-                    onAction('approve', item);
-                  } else {
-                    if (confirm(`置信度较低(${item.confidence}%)，确定要确认此风险项吗？`)) {
+                onClick={async () => {
+                  try {
+                    await submitReviewApi(item.task_id, item.id, 'approve');
+                    if (item.confidence >= 70) {
                       onAction('approve', item);
+                    } else {
+                      if (confirm(`置信度较低(${item.confidence}%)，确定要确认此风险项吗？`)) {
+                        onAction('approve', item);
+                      }
                     }
+                  } catch (err: any) {
+                    toast.error(`确认失败: ${err.message}`);
                   }
                 }}
                 className="flex items-center gap-1.5 px-4 py-1.5 text-[0.875rem] bg-green-50 text-green-700 rounded-lg hover:bg-green-100 border border-green-200"
@@ -390,7 +400,8 @@ function GroupHeader({ level, count, expanded, onClick }: { level: RiskLevel; co
 
 // ===== PendingReviewPanel =====
 function PendingReviewPanel({ taskId }: { taskId: string }) {
-  const [risks, setRisks] = useState<RiskItem[]>(MOCK_RISK_ITEMS.filter(r => r.task_id === taskId));
+  const [risks, setRisks] = useState<RiskItem[]>([]);
+  const [risksLoading, setRisksLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [levelFilter, setLevelFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -399,6 +410,13 @@ function PendingReviewPanel({ taskId }: { taskId: string }) {
   const [editingItem, setEditingItem] = useState<RiskItem | null>(null);
   const [showBatchReject, setShowBatchReject] = useState(false);
   const [batchRejectReason, setBatchRejectReason] = useState<RejectReason | ''>('');
+
+  useEffect(() => {
+    fetchReviewResult(taskId)
+      .then(setRisks)
+      .catch(err => toast.error(`加载审查结果失败: ${err.message}`))
+      .finally(() => setRisksLoading(false));
+  }, [taskId]);
 
   const filtered = useMemo(() => {
     let list = [...risks];
@@ -417,45 +435,76 @@ function PendingReviewPanel({ taskId }: { taskId: string }) {
 
   const remainingPending = risks.filter(r => r.level === 'high' && r.human_review_status === 'pending').length;
 
-  const handleAction = useCallback((action: 'approve' | 'edit' | 'reject', item: RiskItem) => {
+  const handleAction = useCallback(async (action: 'approve' | 'edit' | 'reject', item: RiskItem) => {
     if (action === 'edit') { setEditingItem(item); return; }
-    const newStatus: HumanReviewStatus = action === 'approve' ? 'approved' : 'rejected';
-    setRisks(prev => prev.map(r => r.id === item.id ? { ...r, human_review_status: newStatus, reviewer: 'user-001', reviewed_at: new Date().toISOString() } : r));
-    setSelectedIds(prev => { const s = new Set(prev); s.delete(item.id); return s; });
-    toast.success(action === 'approve' ? '已确认' : '已驳回', { style: { backgroundColor: action === 'approve' ? '#E8F5E9' : '#FFEBEE' } });
-  }, []);
+    try {
+      const apiAction = action === 'approve' ? 'approve' : 'reject';
+      await submitReviewApi(taskId, item.id, apiAction);
+      const newStatus: HumanReviewStatus = action === 'approve' ? 'approved' : 'rejected';
+      setRisks(prev => prev.map(r => r.id === item.id ? { ...r, human_review_status: newStatus, reviewer: 'user-001', reviewed_at: new Date().toISOString() } : r));
+      setSelectedIds(prev => { const s = new Set(prev); s.delete(item.id); return s; });
+      toast.success(action === 'approve' ? '已确认' : '已驳回', { style: { backgroundColor: action === 'approve' ? '#E8F5E9' : '#FFEBEE' } });
+    } catch (err: any) {
+      toast.error(`操作失败: ${err.message}`);
+    }
+  }, [taskId]);
 
-  const handleBatchApprove = () => {
+  const handleBatchApprove = async () => {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
-    console.log(`[API] POST ${API_ENDPOINTS.batchReview.path.replace('{task_id}', taskId)}`, { risk_ids: ids, action: 'approved' });
-    setRisks(prev => prev.map(r => ids.includes(r.id) ? { ...r, human_review_status: 'approved', reviewer: 'user-001', reviewed_at: new Date().toISOString() } : r));
-    setSelectedIds(new Set());
-    toast.success(`已确认 ${ids.length} 项`, { style: { backgroundColor: '#E8F5E9' } });
+    try {
+      const reviews = ids.map(id => ({ risk_id: id, action: 'approved' }));
+      await batchReviewApi(taskId, reviews);
+      setRisks(prev => prev.map(r => ids.includes(r.id) ? { ...r, human_review_status: 'approved', reviewer: 'user-001', reviewed_at: new Date().toISOString() } : r));
+      setSelectedIds(new Set());
+      toast.success(`已确认 ${ids.length} 项`, { style: { backgroundColor: '#E8F5E9' } });
+    } catch (err: any) {
+      toast.error(`批量确认失败: ${err.message}`);
+    }
   };
 
-  const handleBatchReject = () => {
+  const handleBatchReject = async () => {
     if (!batchRejectReason) { toast.error('请选择驳回原因'); return; }
     const ids = Array.from(selectedIds);
-    console.log(`[API] POST ${API_ENDPOINTS.batchReview.path.replace('{task_id}', taskId)}`, { risk_ids: ids, action: 'rejected', reason: batchRejectReason });
-    setRisks(prev => prev.map(r => ids.includes(r.id) ? { ...r, human_review_status: 'rejected', reject_reason: batchRejectReason as RejectReason, reviewer: 'user-001', reviewed_at: new Date().toISOString() } : r));
-    setSelectedIds(new Set());
-    setShowBatchReject(false);
-    setBatchRejectReason('');
-    toast.success(`已驳回 ${ids.length} 项`, { style: { backgroundColor: '#FFEBEE' } });
+    try {
+      const reviews = ids.map(id => ({ risk_id: id, action: 'rejected', comment: batchRejectReason }));
+      await batchReviewApi(taskId, reviews);
+      setRisks(prev => prev.map(r => ids.includes(r.id) ? { ...r, human_review_status: 'rejected', reject_reason: batchRejectReason as RejectReason, reviewer: 'user-001', reviewed_at: new Date().toISOString() } : r));
+      setSelectedIds(new Set());
+      setShowBatchReject(false);
+      setBatchRejectReason('');
+      toast.success(`已驳回 ${ids.length} 项`, { style: { backgroundColor: '#FFEBEE' } });
+    } catch (err: any) {
+      toast.error(`批量驳回失败: ${err.message}`);
+    }
   };
 
-  const handleEditSave = (updated: Partial<RiskItem>) => {
+  const handleEditSave = async (updated: Partial<RiskItem>) => {
     if (!editingItem) return;
-    console.log(`[API] PUT ${API_ENDPOINTS.submitReview.path.replace('{task_id}', taskId).replace('{risk_id}', editingItem.id)}`, { action: 'modified', ...updated });
-    setRisks(prev => prev.map(r => r.id === editingItem.id ? { ...r, ...updated, human_review_status: 'modified' as HumanReviewStatus, reviewer: 'user-001', reviewed_at: new Date().toISOString() } : r));
-    setEditingItem(null);
-    toast.success('已修正', { style: { backgroundColor: '#FFF3E0' }, duration: 3000 });
+    try {
+      await submitReviewApi(taskId, editingItem.id, 'modify', {
+        modified_content: {
+          level: updated.level,
+          description: updated.description,
+          suggestion: updated.suggestion,
+          legal_basis: updated.legal_basis,
+        }
+      });
+      setRisks(prev => prev.map(r => r.id === editingItem.id ? { ...r, ...updated, human_review_status: 'modified' as HumanReviewStatus, reviewer: 'user-001', reviewed_at: new Date().toISOString() } : r));
+      setEditingItem(null);
+      toast.success('已修正', { style: { backgroundColor: '#FFF3E0' }, duration: 3000 });
+    } catch (err: any) {
+      toast.error(`修改失败: ${err.message}`);
+    }
   };
 
-  const handleGenerateReport = () => {
-    console.log(`[API] POST ${API_ENDPOINTS.generateReport.path.replace('{task_id}', taskId)}`);
-    toast.success('报告生成请求已提交');
+  const handleGenerateReport = async () => {
+    try {
+      await generateReportApi(taskId);
+      toast.success('报告生成请求已提交');
+    } catch (err: any) {
+      toast.error(`报告生成失败: ${err.message}`);
+    }
   };
 
   return (
@@ -567,31 +616,40 @@ function PendingReviewPanel({ taskId }: { taskId: string }) {
 
 // ===== ReportReadyPanel =====
 function ReportReadyPanel({ task }: { task: Task }) {
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const blob = await downloadReportBlob(task.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `review_report_${task.id}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('报告下载成功');
+    } catch (err: any) {
+      toast.error(`下载失败: ${err.message}`);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <div className="bg-white border border-green-200 rounded-xl p-8 text-center">
       <CheckCircle2 className="w-14 h-14 text-green-500 mx-auto mb-4" />
       <h3 className="text-green-700 mb-2">审查完成</h3>
       <p className="text-[0.875rem] text-gray-500 mb-6">
-        共 {task.risk_count || 25} 项风险，经人工审核已处理全部高风险项
+        共 {task.risk_count || 0} 项风险，经人工审核已处理全部高风险项
       </p>
       <div className="flex items-center justify-center gap-4">
         <button
-          onClick={() => {
-            console.log(`[API] GET ${API_ENDPOINTS.downloadReport.path.replace('{task_id}', task.id)}`);
-            toast.info('查看报告 — 将跳转至报告预览页（后续阶段设计）');
-          }}
-          className="flex items-center gap-2 px-5 py-2.5 text-[0.875rem] bg-primary text-primary-foreground rounded-lg"
+          onClick={handleDownload}
+          disabled={downloading}
+          className="flex items-center gap-2 px-5 py-2.5 text-[0.875rem] bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-40"
         >
-          <Eye className="w-4 h-4" /> 查看报告
-        </button>
-        <button
-          onClick={() => {
-            console.log(`[API] GET ${API_ENDPOINTS.downloadReport.path.replace('{task_id}', task.id)}`);
-            toast.info('下载 PDF 报告');
-          }}
-          className="flex items-center gap-2 px-5 py-2.5 text-[0.875rem] border border-border rounded-lg hover:bg-gray-50"
-        >
-          <Download className="w-4 h-4" /> 下载 PDF 报告
+          <Download className="w-4 h-4" /> {downloading ? '下载中...' : '下载 PDF 报告'}
         </button>
       </div>
     </div>
@@ -621,21 +679,25 @@ export function ReviewPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 模拟 GET /api/v1/tasks/{task_id}
-    console.log(`[API] GET ${API_ENDPOINTS.taskDetail.path.replace('{task_id}', task_id || '')}`);
-    setTimeout(() => {
-      const found = MOCK_TASKS.find(t => t.id === task_id);
-      if (!found) { toast.error('任务不存在'); navigate('/'); return; }
-      setTask(found);
-      setLoading(false);
-    }, 400);
+    if (!task_id) { navigate('/'); return; }
+    fetchTaskDetail(task_id)
+      .then(found => {
+        if (!found) { toast.error('任务不存在'); navigate('/'); return; }
+        setTask(found);
+        setLoading(false);
+      })
+      .catch(err => { toast.error(`加载任务失败: ${err.message}`); navigate('/'); });
   }, [task_id]);
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
     if (!task) return;
-    console.log(`[API] POST ${API_ENDPOINTS.cancelTask.path.replace('{task_id}', task.id)}`);
-    setTask({ ...task, status: 'cancelled' });
-    toast.info('已取消审查');
+    try {
+      await cancelTaskApi(task.id);
+      setTask({ ...task, status: 'cancelled' });
+      toast.info('已取消审查');
+    } catch (err: any) {
+      toast.error(`取消失败: ${err.message}`);
+    }
   };
 
   if (loading || !task) {
