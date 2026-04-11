@@ -164,7 +164,7 @@ export async function fetchTaskList(): Promise<Task[]> {
   return rawTasks.map(mapTask);
 }
 
-export async function uploadFile(file: File, dimensions: string[]): Promise<{ task_id: string; file_name: string; file_size: number; status: string }> {
+export async function uploadFile(file: File, dimensions: string[]): Promise<{ task_id?: string; code?: string; message?: string; existing_task_id?: string }> {
   const formData = new FormData();
   formData.append('file', file);
   if (dimensions.length > 0) {
@@ -174,11 +174,14 @@ export async function uploadFile(file: File, dimensions: string[]): Promise<{ ta
     method: 'POST',
     body: formData,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || `Upload failed: ${res.status}`);
+  const data = await res.json();
+  if (data.code === 'DUPLICATE_UPLOAD') {
+    throw new Error(data.message || '该文件已存在，请勿重复上传');
   }
-  return res.json();
+  if (!res.ok) {
+    throw new Error(data.message || `Upload failed: ${res.status}`);
+  }
+  return data;
 }
 
 export async function fetchTaskDetail(taskId: string): Promise<Task | null> {
@@ -192,6 +195,12 @@ export async function fetchTaskDetail(taskId: string): Promise<Task | null> {
 export async function cancelTask(taskId: string): Promise<{ task_id: string; status: string }> {
   const res = await fetch(`${API_BASE}/tasks/${taskId}/cancel`, { method: 'POST' });
   if (!res.ok) throw new Error(`Cancel failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteTask(taskId: string): Promise<{ task_id: string; deleted: boolean }> {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
   return res.json();
 }
 
@@ -216,6 +225,10 @@ export async function submitReview(
     headers: { 'Content-Type': 'application/json', 'X-User-Id': 'frontend_user' },
     body: JSON.stringify(body),
   });
+  // 409 means already reviewed - backend still processed it successfully
+  if (res.status === 409) {
+    return { risk_id: riskId, human_review_status: 'already_reviewed', remaining_pending: 0 };
+  }
   if (!res.ok) throw new Error(`Review failed: ${res.status}`);
   return res.json();
 }
@@ -261,6 +274,7 @@ export const API_ENDPOINTS = {
   taskDetail:      { method: 'GET',  path: `${API_BASE}/tasks/{task_id}`,                status: '已连接' },
   taskStream:      { method: 'GET',  path: `${API_BASE}/tasks/{task_id}/stream`,         status: '已连接' },
   cancelTask:      { method: 'POST', path: `${API_BASE}/tasks/{task_id}/cancel`,         status: '已连接' },
+  deleteTask:      { method: 'DELETE', path: `${API_BASE}/tasks/{task_id}`,              status: '已连接' },
   reviewResult:    { method: 'GET',  path: `${API_BASE}/tasks/{task_id}/result`,         status: '已连接' },
   riskDetail:      { method: 'GET',  path: `${API_BASE}/tasks/{task_id}/risks/{risk_id}`, status: '已连接' },
   submitReview:    { method: 'PUT',  path: `${API_BASE}/tasks/{task_id}/risks/{risk_id}/review`, status: '已连接' },

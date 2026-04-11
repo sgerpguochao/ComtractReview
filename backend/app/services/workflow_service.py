@@ -80,7 +80,7 @@ async def run_review_workflow(task_id: str):
         await db.refresh(task)
         print(f"[workflow] Task {task_id} -> parsing")
 
-    await _emit_event(task_id, "status_change", {"status": "parsing", "progress": 5})
+    await _emit_event(task_id, "status_change", {"status": "parsing", "progress": 5, "current_stage": "文档解析"})
 
     try:
         # Step 2: parse_doc
@@ -90,7 +90,7 @@ async def run_review_workflow(task_id: str):
 
         async with async_session() as db:
             await _update_task(db, task_id, progress=25, current_stage="解析完成")
-        await _emit_event(task_id, "stage_complete", {"stage": "parse_doc", "progress": 25})
+        await _emit_event(task_id, "stage_complete", {"stage": "parse_doc", "progress": 25, "current_stage": "条款提取"})
 
         if result.get("error_message"):
             raise RuntimeError(result["error_message"])
@@ -105,7 +105,7 @@ async def run_review_workflow(task_id: str):
 
         async with async_session() as db:
             await _update_task(db, task_id, progress=35, current_stage="条款提取")
-        await _emit_event(task_id, "stage_complete", {"stage": "extract_clauses", "progress": 35})
+        await _emit_event(task_id, "stage_complete", {"stage": "extract_clauses", "progress": 35, "current_stage": "风险识别"})
 
         print(f"[workflow] {task_id}: extracted {len(state['clauses'])} clauses")
 
@@ -147,6 +147,7 @@ async def run_review_workflow(task_id: str):
         await _emit_event(task_id, "ai_complete", {
             "risk_count": len(risks),
             "progress": 100,
+            "current_stage": "待人工审核",
         })
 
         # Record review history
@@ -175,7 +176,7 @@ async def run_review_workflow(task_id: str):
                 error_message=str(e),
             )
             await db.commit()
-        await _emit_event(task_id, "error", {"message": str(e)})
+        await _emit_event(task_id, "error", {"message": str(e), "current_stage": "审查失败"})
 
 
 async def check_and_finalize_review(task_id: str):

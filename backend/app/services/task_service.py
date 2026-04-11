@@ -126,3 +126,54 @@ async def get_risk_count(db: AsyncSession, task_id: str) -> int:
         select(func.count(RiskItem.id)).where(RiskItem.task_id == task_id)
     )
     return result.scalar() or 0
+
+
+async def delete_task(db: AsyncSession, task_id: str) -> bool:
+    """
+    Delete a task and all related data:
+    - Risk items and their human decisions
+    - Review history
+    - File records
+    - Uploaded files from storage
+    """
+    import shutil
+    import os
+
+    from app.models.risk_item import RiskItem
+    from app.models.human_decision import HumanDecision
+    from app.models.review_history import ReviewHistory
+    from app.models.file_record import FileRecord
+    from app.config import settings
+
+    # Get all risk items for this task (to delete human decisions)
+    risk_items_result = await db.execute(select(RiskItem).where(RiskItem.task_id == task_id))
+    risk_items = list(risk_items_result.scalars().all())
+    risk_ids = [r.id for r in risk_items]
+
+    # Delete human decisions for these risk items
+    if risk_ids:
+        await db.execute(
+            HumanDecision.__table__.delete().where(HumanDecision.risk_id.in_(risk_ids))
+        )
+
+    # Delete risk items
+    await db.execute(RiskItem.__table__.delete().where(RiskItem.task_id == task_id))
+
+    # Delete review history
+    await db.execute(ReviewHistory.__table__.delete().where(ReviewHistory.task_id == task_id))
+
+    # Delete file records
+    await db.execute(FileRecord.__table__.delete().where(FileRecord.task_id == task_id))
+
+    # Delete the task
+    task_result = await db.execute(Task.__table__.delete().where(Task.id == task_id))
+
+    # Commit the transaction
+    await db.commit()
+
+    # Delete the uploaded files from storage
+    storage_dir = os.path.join(settings.storage_path, task_id)
+    if os.path.exists(storage_dir):
+        shutil.rmtree(storage_dir)
+
+    return True

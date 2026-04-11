@@ -65,10 +65,11 @@ async def upload_task(
     if file.filename:
         dup = await file_service.check_duplicate(db, file.filename, file_size, settings.upload_duplicate_window_days)
         if dup:
-            return JSONResponse(
-                status_code=409,
-                content={"code": "DUPLICATE_UPLOAD", "message": "File uploaded recently", "details": {"existing_task_id": dup.id}},
-            )
+            return {
+                "code": "DUPLICATE_UPLOAD",
+                "message": "该文件已存在，请勿重复上传",
+                "existing_task_id": dup.id,
+            }
 
     # Create task
     task = await task_service.create_task(db, file_name=file.filename or "unknown", file_size=file_size)
@@ -157,6 +158,18 @@ async def cancel_task(task_id: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await sse_manager.broadcast(task_id, "status_change", {"task_id": task_id, "status": "cancelled", "progress": 0})
     return {"task_id": task_id, "status": "cancelled"}
+
+
+@router.delete("/tasks/{task_id}")
+async def delete_task(task_id: str, db: AsyncSession = Depends(get_db)):
+    task = await task_service.get_task(db, task_id)
+    if not task:
+        return JSONResponse(
+            status_code=404,
+            content={"code": "TASK_NOT_FOUND", "message": "Task not found", "details": {}},
+        )
+    await task_service.delete_task(db, task_id)
+    return {"task_id": task_id, "deleted": True}
 
 
 @router.get("/tasks/{task_id}/stream")

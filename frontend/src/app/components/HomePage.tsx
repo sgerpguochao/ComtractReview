@@ -1,10 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { Upload, FileUp, RefreshCw, ChevronRight } from 'lucide-react';
+import { Upload, FileUp, RefreshCw, ChevronRight, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Header } from './Header';
 import {
-  fetchTaskList, uploadFile,
+  fetchTaskList, uploadFile, deleteTask,
   STATUS_LABELS,
   API_ENDPOINTS,
   type Task,
@@ -178,10 +178,21 @@ export function HomePage() {
               <p className="py-4 text-center text-[0.875rem] text-gray-400">暂无审查记录</p>
             ) : tasks.slice(0, visibleCount).map(task => {
               const sc = STATUS_COLORS[task.status] || { bg: '#F3F4F6', color: '#6B7280' };
+              const handleDelete = async (e: React.MouseEvent) => {
+                e.stopPropagation();
+                if (!confirm(`确定要删除"${task.file_name}"吗？此操作不可恢复。`)) return;
+                try {
+                  await deleteTask(task.id);
+                  setTasks(prev => prev.filter(t => t.id !== task.id));
+                  toast.success('删除成功');
+                } catch (err: any) {
+                  toast.error(`删除失败: ${err.message}`);
+                }
+              };
               return (
                 <div
                   key={task.id}
-                  className="flex items-center gap-4 py-3.5 cursor-pointer hover:bg-gray-50 -mx-2 px-2 rounded-lg transition-colors"
+                  className="flex items-center gap-4 py-3.5 cursor-pointer hover:bg-gray-50 -mx-2 px-2 rounded-lg transition-colors group"
                   onClick={() => navigate(`/review/${task.id}`)}
                 >
                   <div className="flex-1 min-w-0">
@@ -208,6 +219,13 @@ export function HomePage() {
                     </button>
                   ) : null}
                   <span className="text-[0.8125rem] text-gray-400 w-14 text-right">{formatDate(task.created_at)}</span>
+                  <button
+                    className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 p-1 rounded transition-opacity"
+                    onClick={handleDelete}
+                    title="删除"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                   <ChevronRight className="w-4 h-4 text-gray-300" />
                 </div>
               );
