@@ -203,11 +203,23 @@ MVP 阶段暂不实现复杂认证，预留 `X-User-Id` 请求头用于标识操
 | 事件类型（`event`） | 说明 | `data` 结构 |
 |---------------------|------|-------------|
 | `status_change` | 任务状态变更 | `{ "task_id", "status", "progress", "current_stage" }` |
-| `progress` | 进度更新 | `{ "task_id", "stage", "stage_progress", "total_progress" }` |
-| `stage_change` | 阶段切换 | `{ "task_id", "from_stage", "to_stage" }` |
-| `review_pending` | 审查完成，等待人工审核 | `{ "task_id", "risk_count", "high_count" }` |
+| `stage_complete` | 阶段完成 | `{ "task_id", "stage", "progress", "current_stage" }` |
+| `ai_complete` | AI 审查完成 | `{ "task_id", "risk_count", "progress", "current_stage" }` |
 | `error` | 错误通知 | `{ "task_id", "error_code", "error_message" }` |
-| `completed` | 审查流程完成 | `{ "task_id", "status": "report_ready" }` |
+
+### 2.12 工作流阶段（WorkflowStage）
+
+后端 `current_stage` 字段值，对应前端 6 阶段进度条：
+
+| 阶段名称 | progress 值 | 说明 |
+|---------|------------|------|
+| `文档上传` | 5% | 文件上传完成，开始解析 |
+| `文档解析` | 20% | parse_doc 阶段完成 |
+| `条款提取` | 40% | extract_clauses 阶段完成 |
+| `风险识别` | 60% | analyze_risks 阶段完成 |
+| `待人工审核` | 80% | AI 审查完成，等待人工处理 |
+| `人工审核` | 95% | 人工审核完成，生成报告 |
+| `报告生成` | 100% | 报告生成完成 |
 
 ---
 
@@ -373,26 +385,32 @@ SSE 事件流格式：
 
 ```
 event: status_change
-data: {"task_id":"a1b2c3d4","status":"parsing","progress":10,"current_stage":"structure_analysis"}
+data: {"task_id":"a1b2c3d4","status":"parsing","progress":5,"current_stage":"文档上传"}
 
-event: stage_change
-data: {"task_id":"a1b2c3d4","from_stage":"structure_analysis","to_stage":"clause_extraction"}
+event: stage_complete
+data: {"task_id":"a1b2c3d4","stage":"parse_doc","progress":20,"current_stage":"文档解析"}
 
-event: progress
-data: {"task_id":"a1b2c3d4","stage":"clause_extraction","stage_progress":60,"total_progress":35}
+event: stage_complete
+data: {"task_id":"a1b2c3d4","stage":"extract_clauses","progress":40,"current_stage":"条款提取"}
 
-event: review_pending
-data: {"task_id":"a1b2c3d4","risk_count":25,"high_count":5}
+event: stage_complete
+data: {"task_id":"a1b2c3d4","stage":"analyze_risks","progress":60,"current_stage":"风险识别"}
 
-event: completed
-data: {"task_id":"a1b2c3d4","status":"report_ready"}
+event: ai_complete
+data: {"task_id":"a1b2c3d4","risk_count":25,"progress":80,"current_stage":"待人工审核"}
+
+event: stage_complete
+data: {"task_id":"a1b2c3d4","stage":"human_review","progress":95,"current_stage":"人工审核"}
+
+event: status_change
+data: {"task_id":"a1b2c3d4","status":"report_ready","progress":100,"current_stage":"报告生成"}
 ```
 
 **说明**：
-- 前端应在上传成功后立即建立 SSE 连接，直至收到 `completed` 或 `error` 事件
-- 后端在连接建立时推送当前最新状态作为首个事件（快照 + 增量）
+- 前端应在上传成功后立即建立 SSE 连接，直至收到 `status_change` (report_ready) 或 `error` 事件
+- 后端在连接建立时推送当前最新状态作为首个事件
 - 连接超时时间：30 分钟，超时后前端可重连
-- SSE 降级方案：HTTP 轮询（GET `/api/v1/tasks/{task_id}`），每 3 秒一次
+- SSE 降级方案：HTTP 轮询（GET `/api/v1/tasks/{task_id}`），每 1.5 秒一次
 
 ---
 
@@ -823,9 +841,9 @@ data: {"task_id":"a1b2c3d4","status":"report_ready"}
 | 步骤 | 前端动作 | 后端接口 | 验证点 |
 |------|---------|----------|--------|
 | 4 | 进入 P2 后立即建立 SSE 连接 `GET /api/v1/tasks/{task_id}/stream` | 3.5 SSE 推送 | 收到首个事件为当前状态快照 |
-| 5 | 后端异步执行：文档解析 → 条款提取 → 风险识别 → 合规检查 | — | SSE 依次推送 `status_change` + `stage_change` + `progress` |
-| 6 | 前端根据 SSE 事件更新 UI 阶段进度面板和总进度条 | — | UI 正确显示 4 阶段进度 |
-| 7 | **降级验证**：关闭 SSE 连接，前端切换为每 3 秒轮询 `GET /api/v1/tasks/{task_id}` | 3.2 任务状态查询 | 轮询能正确获取状态 |
+| 5 | 后端异步执行：文档上传 → 文档解析 → 条款提取 → 风险识别 → 人工审核 → 报告生成 | — | SSE 依次推送 `status_change` + `stage_complete` |
+| 6 | 前端根据 SSE 事件更新 UI 阶段进度面板和总进度条 | — | UI 正确显示 6 阶段进度 |
+| 7 | **降级验证**：关闭 SSE 连接，前端切换为每 1.5 秒轮询 `GET /api/v1/tasks/{task_id}` | 3.2 任务状态查询 | 轮询能正确获取状态 |
 
 **异常场景验证**：
 
@@ -890,17 +908,20 @@ data: {"task_id":"a1b2c3d4","status":"report_ready"}
 | C4 | 上传超大文件（> 50MB），返回 `FILE_TOO_LARGE` | 3.1 | □ |
 | C5 | SSE 连接成功，收到状态快照 | 3.5 | □ |
 | C6 | SSE 收到 `status_change` 事件，UI 状态更新 | 3.5 | □ |
-| C7 | SSE 收到 `progress` 事件，进度条更新 | 3.5 | □ |
-| C8 | SSE 收到 `review_pending` 事件，加载风险列表 | 3.5 + 3.6 | □ |
-| C9 | SSE 降级轮询，3 秒一次，状态正确 | 3.2 | □ |
+| C7 | SSE 收到 `stage_complete` 事件，进度条和阶段更新 | 3.5 | □ |
+| C8 | SSE 收到 `ai_complete` 事件，显示待人工审核状态 | 3.5 + 3.6 | □ |
+| C9 | SSE 降级轮询，1.5 秒一次，状态正确 | 3.2 | □ |
 | C10 | 风险项列表按高/中/低分组正确 | 3.6 | □ |
 | C11 | 单条风险项详情字段完整 | 3.7 | □ |
 | C12 | approve 操作，状态变更为 approved | 3.8 | □ |
 | C13 | reject 操作（带 comment），状态变更为 rejected | 3.8 | □ |
 | C14 | modify 操作（带 modified_content），状态变更为 modified | 3.8 | □ |
-| C15 | 批量操作成功，返回 updated_count | 3.9 | □ |
-| C16 | 全部高风险处理后，remaining_pending = 0 | 3.8 / 3.9 | □ |
-| C17 | 生成报告成功，返回 report_id | 3.10 | □ |
-| C18 | 下载 PDF 报告，文件可打开 | 3.11 | □ |
-| C19 | 操作日志包含全链路记录 | 3.12 | □ |
-| C20 | 取消任务后，状态变为 cancelled | 3.4 | □ |
+| C15 | 批量 approve 操作成功，返回 updated_count | 3.9 | □ |
+| C16 | 批量 reject 操作成功 | 3.9 | □ |
+| C17 | 全部高风险处理后，remaining_pending = 0 | 3.8 / 3.9 | □ |
+| C18 | 生成报告成功，返回 report_id | 3.10 | □ |
+| C19 | 下载 PDF 报告，文件可打开 | 3.11 | □ |
+| C20 | 操作日志包含全链路记录 | 3.12 | □ |
+| C21 | 取消任务后，状态变为 cancelled | 3.4 | □ |
+| C22 | 首页任务列表点击"进度"按钮进入详情页 | P1 → P2 | □ |
+| C23 | 6 阶段进度条正确显示（文档上传→文档解析→条款提取→风险识别→人工审核→报告生成） | UI | □ |

@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { Upload, FileUp, RefreshCw, ChevronRight, Trash2 } from 'lucide-react';
+import { Upload, FileUp, RefreshCw, ChevronRight, Trash2, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import { Header } from './Header';
 import {
@@ -178,6 +178,7 @@ export function HomePage() {
               <p className="py-4 text-center text-[0.875rem] text-gray-400">暂无审查记录</p>
             ) : tasks.slice(0, visibleCount).map(task => {
               const sc = STATUS_COLORS[task.status] || { bg: '#F3F4F6', color: '#6B7280' };
+              // All tasks can view progress
               const handleDelete = async (e: React.MouseEvent) => {
                 e.stopPropagation();
                 if (!confirm(`确定要删除"${task.file_name}"吗？此操作不可恢复。`)) return;
@@ -192,8 +193,7 @@ export function HomePage() {
               return (
                 <div
                   key={task.id}
-                  className="flex items-center gap-4 py-3.5 cursor-pointer hover:bg-gray-50 -mx-2 px-2 rounded-lg transition-colors group"
-                  onClick={() => navigate(`/review/${task.id}`)}
+                  className="flex items-center gap-4 py-3.5 -mx-2 px-2 rounded-lg transition-colors group hover:bg-gray-50"
                 >
                   <div className="flex-1 min-w-0">
                     <p className="text-[0.9375rem] truncate">{task.file_name}</p>
@@ -204,6 +204,7 @@ export function HomePage() {
                   >
                     {STATUS_LABELS[task.status]}
                   </span>
+                  {/* Show inline progress for parsing/reviewing */}
                   {task.status === 'reviewing' || task.status === 'parsing' ? (
                     <div className="w-20 flex items-center gap-1.5">
                       <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
@@ -213,9 +214,18 @@ export function HomePage() {
                     </div>
                   ) : task.risk_count ? (
                     <span className="text-[0.8125rem] text-gray-500 w-20 text-right">{task.risk_count}项风险</span>
-                  ) : task.status === 'parse_failed' || task.status === 'review_failed' ? (
-                    <button className="text-[0.8125rem] text-blue-600 flex items-center gap-1" onClick={e => { e.stopPropagation(); toast.info('重试功能将调用后端接口'); }}>
-                      <RefreshCw className="w-3.5 h-3.5" /> 重试
+                  ) : null}
+                  {/* Progress button - all tasks can click to view progress */}
+                  <button
+                    className="text-[0.8125rem] text-blue-600 flex items-center gap-1 hover:bg-blue-50 px-2 py-1 rounded transition-colors"
+                    onClick={(e) => { e.stopPropagation(); navigate(`/review/${task.id}`); }}
+                    title="查看整体进度"
+                  >
+                    <Activity className="w-3.5 h-3.5" /> 进度
+                  </button>
+                  {task.status === 'parse_failed' || task.status === 'review_failed' ? (
+                    <button className="text-[0.8125rem] text-blue-600 flex items-center gap-1 hover:bg-blue-50 px-2 py-1 rounded transition-colors" onClick={e => { e.stopPropagation(); toast.info('重试功能将调用后端接口'); }}>
+                      <RefreshCw className="w-3.5 h-3.5" />
                     </button>
                   ) : null}
                   <span className="text-[0.8125rem] text-gray-400 w-14 text-right">{formatDate(task.created_at)}</span>

@@ -1,10 +1,11 @@
-# 数据模型规范 v1.0
+# 数据模型规范 v1.1
 
-> 版本：v1.0 | 日期：2026-04-09
+> 版本：v1.1 | 日期：2026-04-13（基于实际实现更新）
 > 阶段：07_data_model
 > 前置文档：docs/06_architecture/（后端架构设计全部分文档）
 >
-> 本文档是 07_data_model 阶段的最终输出，汇总所有数据模型定义，作为后续前后端实现的唯一依据。
+> 本文档是 07_data_model 阶段的最终输出，汇总实际实现的数据模型定义，作为前后端实现的依据。
+> **v1.1 变更**：MVP 实现精简为 5 个核心模型（去除 ReviewRule、ReviewResult、StatusTransition、InterruptRecord、ReviewSession）。
 
 ---
 
@@ -20,47 +21,30 @@
 
 ## 模型总览
 
-本系统共定义 **10 个核心数据模型**：
+本系统 MVP 实现 **5 个核心数据模型**（SQLAlchemy async ORM，SQLite）：
 
-| 模型 | 职责 | 关联文档 |
+| 模型 | 职责 | 数据库表 |
 |------|------|----------|
-| `Task` | 审查任务核心，贯穿全生命周期 | 上传与任务状态 |
-| `FileRecord` | 上传文件的元信息与存储位置 | 上传与任务状态 |
-| `StatusTransition` | 任务状态变更历史 | 上传与任务状态 |
-| `ReviewRule` | 可配置的审核规则模板 | 审核规则与风险项 |
-| `RiskItem` | AI 识别的具体风险项 | 审核规则与风险项 |
-| `ReviewResult` | 审查结果汇总 | 审核规则与风险项 |
-| `TextPosition` | 风险项原文定位（内嵌于 RiskItem） | 审核规则与风险项 |
-| `HumanDecision` | 人工对单个风险项的决策 | 人机交互流程 |
-| `ReviewSession` | 一次完整的人工审核过程 | 人机交互流程 |
-| `ReviewHistory` | 审核历史与审计追踪 | 人机交互流程 |
-| `InterruptRecord` | LangGraph 中断事件记录 | 人机交互流程 |
+| `Task` | 审查任务核心，贯穿全生命周期，含进度/阶段/状态 | `tasks` |
+| `FileRecord` | 上传文件的元信息与存储位置 | `file_records` |
+| `RiskItem` | AI 识别的具体风险项，含人工审核状态 | `risk_items` |
+| `HumanDecision` | 人工对单个风险项的决策记录 | `human_decisions` |
+| `ReviewHistory` | 审核历史与审计追踪 | `review_history` |
 
 ---
 
 ## 完整关系图
 
 ```
-                         ReviewRule (1)
-                              │
-                              │ 1:N
-                              ▼
-Task (1) ── 1:1 ── FileRecord          RiskItem (N) ←── TextPosition (内嵌 JSON)
-  │                      │                  │
-  │                      │                  │ 包含于
-  │ 1:N                  │                  ▼
-  ▼                      │           ReviewResult (1) ── 1:1 ── Task
-StatusTransition (N)     │
-                         │
-                         │ 1:N
-                         ▼
-                  ReviewSession (N) ──── 1:N ──── HumanDecision (N)
-                         │
-                         │ 1:N
-                         ▼
-                  ReviewHistory (N)
-
-Task (1) ── 1:N ── InterruptRecord (N)
+Task (1) ── 1:1 ── FileRecord
+  │
+  │ 1:N
+  ├── RiskItem (N) ── clause_position (内嵌 JSON)
+  │        │
+  │        │ 1:N
+  │        └── HumanDecision (N)
+  │
+  └── ReviewHistory (N)
 ```
 
 ---
@@ -71,16 +55,18 @@ Task (1) ── 1:N ── InterruptRecord (N)
 
 | 值 | 说明 | 触发场景 |
 |----|------|----------|
-| `uploaded` | 已上传 | 文件上传完成 |
-| `parsing` | 解析中 | 触发文档解析 |
-| `parse_complete` | 解析完成 | 文本提取成功 |
-| `parse_failed` | 解析失败 | 文本提取失败 |
-| `reviewing` | AI 审查中 | 触发 LangGraph 审查图 |
-| `pending_review` | 待人工审核 | LangGraph interrupt 触发 |
-| `human_reviewing` | 人工审核中 | 提交人工决策后恢复 |
-| `review_failed` | 审查失败 | AI 调用异常 |
-| `report_ready` | 报告可导出 | 审查流程完成 |
+| `uploaded` | 已上传 | 文件上传完成，等待工作流启动 |
+| `parsing` | 解析/审查中 | 工作流启动，覆盖解析→条款提取→风险识别全流程 |
+| `review_failed` | 审查失败 | AI 调用异常或解析失败 |
+| `parse_failed` | 解析失败 | 文档无法解析（格式错误） |
+| `pending_review` | 待人工审核 | AI 分析完成，等待人工 |
+| `human_reviewing` | 人工审核中 | 已有审核操作提交 |
+| `report_ready` | 报告可导出 | 高风险全部处理，报告已生成 |
 | `cancelled` | 已取消 | 用户主动取消 |
+
+> **前端标签（STATUS_LABELS）**：
+> - `parsing` → "AI审查中"，`pending_review` → "待审核"，`human_reviewing` → "审核中"
+> - `report_ready` → "报告可导出"，`parse_failed`/`review_failed` → "解析失败"/"审查失败"
 
 ### RiskLevel（风险等级）
 
@@ -107,7 +93,7 @@ Task (1) ── 1:N ── InterruptRecord (N)
 | `modify` | 修改内容/等级 | pending → modified |
 | `reject` | 驳回非风险项 | pending → rejected |
 
-### RuleCategory（规则分类）
+### RiskCategory（风险分类）
 
 | 值 | 说明 |
 |----|------|
@@ -122,43 +108,14 @@ Task (1) ── 1:N ── InterruptRecord (N)
 | `liability_limitation` | 责任限制 |
 | `other` | 其他 |
 
-### InterruptType（中断类型）
-
-| 值 | 说明 | 前端渲染 |
-|----|------|----------|
-| `human_review` | 风险审核 | 风险项审核列表 |
-| `report_confirmation` | 报告确认 | 报告确认弹窗 |
-| `tool_approval` | 工具审批 | 工具调用确认弹窗 |
-
-### ReviewSessionStatus（审核会话状态）
-
-| 值 | 说明 |
-|----|------|
-| `active` | 审核中 |
-| `completed` | 已完成 |
-| `timeout` | 已超时 |
-
-### InterruptStatus（中断状态）
-
-| 值 | 说明 |
-|----|------|
-| `pending` | 等待处理 |
-| `resumed` | 已恢复执行 |
-| `expired` | 已超时 |
-
 ### ReviewEventType（审核历史事件类型）
 
 | 值 | 说明 |
 |----|------|
-| `session_started` | 审核会话开始 |
-| `decision_made` | 对某个风险项做了决策 |
-| `session_completed` | 审核会话完成 |
-| `session_timeout` | 审核会话超时 |
-| `checkpoint_created` | 创建了 checkpoint |
-| `checkpoint_restored` | 从 checkpoint 恢复 |
-| `state_changed` | 任务状态变更 |
-| `interrupt_triggered` | 触发中断 |
-| `resume_requested` | 请求恢复执行 |
+| `ai_complete` | AI 审查完成 |
+| `review_submitted` | 单条/批量审核提交 |
+| `report_generated` | 报告生成 |
+| `task_cancelled` | 任务取消 |
 
 ---
 
@@ -190,41 +147,34 @@ Task (1) ── 1:N ── InterruptRecord (N)
 | FileRecord | `file_size` | 文件大小 |
 | FileRecord | `created_at` | 上传时间 |
 
-### 审核结果页
+### 审核结果页（GET /result 返回的 RiskItem 列表）
 
 | 模型 | 字段 | 展示形式 |
 |------|------|----------|
-| ReviewResult | `total_risks` | 风险总数 |
-| ReviewResult | `high_count` | 高风险数（红色） |
-| ReviewResult | `medium_count` | 中风险数（橙色） |
-| ReviewResult | `low_count` | 低风险数（黄色） |
-| ReviewResult | `summary` | 审查总结段落 |
-| RiskItem | `risk_id` | 风险编号 |
-| RiskItem | `level` | 风险等级标签 |
+| RiskItem | `id` | 风险编号 |
+| RiskItem | `level` | 风险等级标签（高/中/低） |
 | RiskItem | `category` | 分类标签 |
 | RiskItem | `confidence` | 置信度条 |
 | RiskItem | `clause_text` | 原文高亮 |
-| RiskItem | `clause_position` | 位置面包屑 |
+| RiskItem | `clause_position` | 位置面包屑（JSON: section/article/page） |
 | RiskItem | `description` | 风险描述 |
 | RiskItem | `suggestion` | 修改建议 |
 | RiskItem | `legal_basis` | 法律依据 |
-| RiskItem | `human_review_status` | 审核状态 |
-| HumanDecision | `action` | 决策标签 |
+| RiskItem | `human_review_status` | 审核状态（pending/approved/modified/rejected） |
+| HumanDecision | `action` | 决策动作标签 |
 | HumanDecision | `comment` | 审核意见 |
-| HumanDecision | `modified_content` | 修改后内容对比 |
+| HumanDecision | `modified_description` | 修改后描述 |
+| HumanDecision | `modified_suggestion` | 修改后建议 |
 
-### 审核操作页
+### 风险统计（前端本地计算）
 
-| 模型 | 字段 | 展示形式 |
-|------|------|----------|
-| ReviewSession | `session_number` | 当前轮次 |
-| ReviewSession | `total_risks` | 审核总量 |
-| ReviewSession | `decisions_count` | 已完成量 |
-| ReviewSession | `timeout_at` | 超时倒计时 |
-| InterruptRecord | `context` | 审核数据源 |
-| HumanDecision | `action` | 审核动作选择器 |
-| HumanDecision | `comment` | 意见输入框 |
-| HumanDecision | `modified_content` | 修改内容编辑器 |
+```
+high_count = RiskItem[level='high'].length
+medium_count = RiskItem[level='medium'].length
+low_count = RiskItem[level='low'].length
+risk_score = min(100, high_count * 10 + medium_count * 5 + low_count * 2)
+remaining_pending = RiskItem[level='high' AND human_review_status='pending'].length
+```
 
 ### 审计日志页
 
@@ -237,29 +187,19 @@ Task (1) ── 1:N ── InterruptRecord (N)
 
 ---
 
-## 后端必须存储字段汇总
+## 后端存储字段汇总
 
-所有模型的所有字段均为 `backend_required: true`，需要在数据库或文件系统中持久化。
-
-### 存储策略
+### 存储策略（MVP 实际实现）
 
 | 数据类型 | 存储方式 | 说明 |
 |----------|----------|------|
-| 任务元信息 | 数据库（SQLite MVP → PostgreSQL 生产） | Task 表 |
+| 任务元信息 | 数据库（SQLite，aiosqlite） | Task 表（含 progress/current_stage） |
 | 文件元信息 | 数据库 | FileRecord 表 |
-| 状态转换记录 | 数据库 | StatusTransition 表 |
-| 审核规则 | 数据库 | ReviewRule 表 |
-| 风险项 | 数据库 + JSON 文件 | RiskItem 表 + review_result.json |
-| 审核结果汇总 | 数据库 + JSON 文件 | ReviewResult 表 |
+| 风险项 | 数据库 | RiskItem 表（含 clause_position JSON） |
 | 人工决策 | 数据库 | HumanDecision 表 |
-| 审核会话 | 数据库 | ReviewSession 表 |
 | 审核历史 | 数据库 | ReviewHistory 表 |
-| 中断记录 | 数据库 | InterruptRecord 表 |
-| LangGraph 状态 | Checkpointer（SQLite/PostgreSQL） | 图内部状态，不直接操作 |
-| 原始文件 | 文件系统（storage/） | `{task_id}/original.{ext}` |
-| 解析文本 | 文件系统（storage/） | `{task_id}/parsed.txt` |
-| 审查结果 | 文件系统（storage/） | `{task_id}/review_result.json` |
-| 报告文件 | 文件系统（storage/） | `{task_id}/report.pdf` |
+| 原始文件 | 文件系统（backend/storage/） | `{task_id}/original.{ext}` |
+| 报告文件 | 文件系统（backend/storage/） | `{task_id}/report.pdf` |
 
 ---
 
@@ -267,14 +207,12 @@ Task (1) ── 1:N ── InterruptRecord (N)
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
-| task_id ↔ thread_id | 1:1 同一 UUID | 简化追踪，一个任务一个审查线程 |
-| 风险项存储 | DB 表 + JSON 文件双写 | DB 用于查询，JSON 供 LangGraph 使用 |
-| 原文定位 | 内嵌 JSON 而非独立表 | 位置信息随风险项一起序列化，简化 LangGraph 集成 |
-| 审核会话 | 独立模型而非 Task 字段 | 支持 Time Travel，同一任务多次审核 |
-| 审核历史 | 统一事件模型 | 灵活记录各类事件，便于审计和回溯 |
-| 中断记录 | 独立模型 | 追踪 LangGraph 中断生命周期 |
-| 统计字段冗余 | ReviewResult 中冗余计数 | 避免前端每次聚合，提升查询性能 |
-| 超时机制 | 24 小时默认超时 | 防止审核会话永久挂起 |
+| 工作流编排 | 纯 Python 异步 (workflow_service.py) | MVP 阶段避免 LangGraph 复杂性 |
+| 进度字段 | Task.progress + Task.current_stage | 数字进度 + 阶段文字双字段，支持前端恢复显示 |
+| 原文定位 | clause_position 内嵌 JSON | 随 RiskItem 一起序列化，查询简单 |
+| 风险统计 | 前端本地聚合 | 避免后端维护冗余计数字段 |
+| 审核历史 | ReviewHistory 统一事件模型 | 审计追踪，支持操作日志抽屉 |
+| 每阶段 DB commit | 每步完成后立即 commit | 保证页面刷新后 progress 字段持久可读 |
 
 ---
 

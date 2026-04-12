@@ -43,21 +43,26 @@ function FileInfo({ task, onCancel }: { task: Task; onCancel: () => void }) {
 
 // ===== Progress Panels =====
 const STAGES = [
-  { name: '文档解析', progress: 15, icon: '①' },
-  { name: '条款提取', progress: 35, icon: '②' },
-  { name: '风险识别', progress: 65, icon: '③' },
-  { name: '报告生成', progress: 85, icon: '④' },
+  { name: '文档上传', progress: 5, icon: '①' },
+  { name: '文档解析', progress: 20, icon: '②' },
+  { name: '条款提取', progress: 40, icon: '③' },
+  { name: '风险识别', progress: 60, icon: '④' },
+  { name: '人工审核', progress: 80, icon: '⑤' },
+  { name: '报告生成', progress: 95, icon: '⑥' },
 ];
 
 function ProgressPanel({ task, isParsing, currentStage, elapsedTime }: { task: Task; isParsing?: boolean; currentStage?: string; elapsedTime?: number }) {
   // Map backend current_stage to UI stage index
   const stageToIndex: Record<string, number> = {
-    '文档解析': 0,
-    '解析完成': 1,
-    '条款提取': 1,
-    '风险识别': 2,
-    '合规检查': 2,
-    '待人工审核': 3,
+    '文档上传': 0,
+    '文档解析': 1,
+    '解析完成': 2,
+    '条款提取': 2,
+    '风险识别': 3,
+    '合规检查': 3,
+    '待人工审核': 4,
+    '人工审核': 4,
+    '报告生成': 5,
   };
 
   // Determine current stage index based on progress
@@ -65,11 +70,14 @@ function ProgressPanel({ task, isParsing, currentStage, elapsedTime }: { task: T
     if (currentStage && stageToIndex[currentStage] !== undefined) {
       return stageToIndex[currentStage];
     }
-    if (task.progress < 15) return 0;
-    if (task.progress < 35) return 1;
-    if (task.progress < 65) return 2;
-    if (task.progress < 100) return 3;
-    return 3;
+    if (task.progress === 0) return 0;
+    if (task.progress < 5) return 0;
+    if (task.progress < 20) return 1;
+    if (task.progress < 40) return 2;
+    if (task.progress < 60) return 3;
+    if (task.progress < 80) return 4;
+    if (task.progress < 100) return 5;
+    return 5;
   };
 
   const currentIdx = getCurrentStageIdx();
@@ -85,11 +93,25 @@ function ProgressPanel({ task, isParsing, currentStage, elapsedTime }: { task: T
 
   return (
     <div className="bg-white border border-border rounded-xl p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h3>{isParsing ? '文档解析中...' : 'AI 审查中...'}</h3>
-        {elapsedTime !== undefined && elapsedTime > 0 && (
-          <span className="text-[0.8125rem] text-gray-500">已耗时: {formatTime(elapsedTime)}</span>
-        )}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <h3>{isParsing ? '文档解析中...' : 'AI 审查中...'}</h3>
+          {currentStage && (
+            <span className="text-[0.875rem] text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{currentStage}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="text-center">
+            <div className="text-2xl font-bold text-blue-600">{task.progress}%</div>
+            <div className="text-[0.75rem] text-gray-400">整体进度</div>
+          </div>
+          {elapsedTime !== undefined && elapsedTime > 0 && (
+            <div className="text-center">
+              <div className="text-[0.875rem] text-gray-600">{formatTime(elapsedTime)}</div>
+              <div className="text-[0.75rem] text-gray-400">已耗时</div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Node progress indicators */}
@@ -118,9 +140,9 @@ function ProgressPanel({ task, isParsing, currentStage, elapsedTime }: { task: T
 
       {/* Stage connector lines */}
       <div className="flex items-center justify-between mb-6 px-2">
-        {[0, 1, 2, 3].map((i) => (
+        {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} className="flex-1 h-0.5 mx-1">
-            {i < 3 && (
+            {i < 4 && (
               <div className={`h-full rounded transition-all ${
                 task.progress > STAGES[i].progress ? 'bg-green-500' :
                 task.progress > STAGES[i].progress - 10 ? 'bg-blue-500' :
@@ -133,12 +155,6 @@ function ProgressPanel({ task, isParsing, currentStage, elapsedTime }: { task: T
 
       {/* Progress bar */}
       <div className="mb-4">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[0.8125rem] text-gray-500">
-            {currentStage || (isParsing ? '文档解析中' : 'AI 审查中')}
-          </span>
-          <span className="text-[0.8125rem] text-gray-600 font-medium">{task.progress}%</span>
-        </div>
         <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
           <div
             className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-700 ease-out"
@@ -154,11 +170,14 @@ function ProgressPanel({ task, isParsing, currentStage, elapsedTime }: { task: T
           <span className="text-gray-600">
             {task.progress < 100 ? (
               <>
+                {currentStage === '文档上传' && '文档上传完成，正在开始解析...'}
                 {currentStage === '文档解析' && '正在读取文档内容，提取文本信息...'}
-                {currentStage === '解析完成' && '文档解析完成，正在提取合同条款...'}
                 {currentStage === '条款提取' && '条款提取完成，正在进行风险分析...'}
                 {currentStage === '风险识别' && '正在使用 AI 模型识别合同风险项...'}
-                {!currentStage && (isParsing ? '正在解析文档...' : '正在分析风险...')}
+                {currentStage === '待人工审核' && 'AI 分析完成，等待人工审核风险项...'}
+                {currentStage === '人工审核' && '人工审核完成，正在生成报告...'}
+                {!currentStage && isParsing && '文档上传完成，正在开始解析...'}
+                {!currentStage && !isParsing && '正在分析风险...'}
               </>
             ) : (
               <>AI 审查完成，共发现 {task.risk_count || 0} 项风险，等待人工审核...</>
@@ -542,7 +561,7 @@ function PendingReviewPanel({ taskId }: { taskId: string }) {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
     try {
-      const reviews = ids.map(id => ({ risk_id: id, action: 'approved' }));
+      const reviews = ids.map(id => ({ risk_id: id, action: 'approve' }));
       await batchReviewApi(taskId, reviews);
       setRisks(prev => prev.map(r => ids.includes(r.id) ? { ...r, human_review_status: 'approved', reviewer: 'user-001', reviewed_at: new Date().toISOString() } : r));
       setSelectedIds(new Set());
@@ -556,7 +575,7 @@ function PendingReviewPanel({ taskId }: { taskId: string }) {
     if (!batchRejectReason) { toast.error('请选择驳回原因'); return; }
     const ids = Array.from(selectedIds);
     try {
-      const reviews = ids.map(id => ({ risk_id: id, action: 'rejected', comment: batchRejectReason }));
+      const reviews = ids.map(id => ({ risk_id: id, action: 'reject', comment: batchRejectReason }));
       await batchReviewApi(taskId, reviews);
       setRisks(prev => prev.map(r => ids.includes(r.id) ? { ...r, human_review_status: 'rejected', reject_reason: batchRejectReason as RejectReason, reviewer: 'user-001', reviewed_at: new Date().toISOString() } : r));
       setSelectedIds(new Set());
@@ -801,13 +820,13 @@ export function ReviewPage() {
 
     eventSource.addEventListener('stage_complete', (e) => {
       const data = JSON.parse(e.data);
-      setTask(prev => prev ? { ...prev, progress: data.progress, current_stage: data.stage } : null);
-      setCurrentStage(data.stage);
+      setTask(prev => prev ? { ...prev, progress: data.progress, current_stage: data.current_stage || data.stage } : null);
+      setCurrentStage(data.current_stage || data.stage);
     });
 
     eventSource.addEventListener('ai_complete', (e) => {
       const data = JSON.parse(e.data);
-      setTask(prev => prev ? { ...prev, status: 'pending_review', progress: 100, current_stage: '待人工审核', risk_count: data.risk_count } : null);
+      setTask(prev => prev ? { ...prev, status: 'pending_review', progress: data.progress || 80, current_stage: '待人工审核', risk_count: data.risk_count } : null);
       setCurrentStage('待人工审核');
     });
 
@@ -816,8 +835,27 @@ export function ReviewPage() {
       // Don't show toast here as it might fire during normal disconnection
     });
 
+    // Polling as backup to ensure progress refreshes
+    const pollInterval = setInterval(async () => {
+      if (!task_id) return;
+      // Only poll when task is not in terminal state
+      const currentTask = await fetchTaskDetail(task_id).catch(() => null);
+      if (currentTask && !['report_ready', 'parse_failed', 'review_failed', 'cancelled'].includes(currentTask.status)) {
+        setTask(prev => {
+          if (!prev) return currentTask;
+          // Only update if progress or stage changed
+          if (prev.progress !== currentTask.progress || prev.current_stage !== currentTask.current_stage) {
+            return { ...prev, ...currentTask };
+          }
+          return prev;
+        });
+        setCurrentStage(currentTask.current_stage || '');
+      }
+    }, 1500);
+
     return () => {
       eventSource.close();
+      clearInterval(pollInterval);
     };
   }, [task_id]);
 
@@ -856,32 +894,77 @@ export function ReviewPage() {
     );
   }
 
+  const isInProgress = task.progress > 0 && task.progress < 100;
+
   const renderPanel = () => {
     switch (task.status) {
       case 'uploaded':
-        return (
-          <div className="bg-white border border-border rounded-xl p-6 text-center">
-            <div className="flex flex-col items-center gap-3">
-              <Clock className="w-8 h-8 text-blue-500 animate-spin" />
-              <p className="text-gray-500">文件已上传，等待后端开始解析...</p>
-              <p className="text-[0.75rem] text-gray-400">已耗时: {elapsedTime > 0 ? `${Math.floor(elapsedTime / 60)}分${elapsedTime % 60}秒` : '0秒'}</p>
-            </div>
-          </div>
-        );
       case 'parsing':
       case 'parse_complete':
-        return <ProgressPanel task={task} isParsing currentStage={currentStage} elapsedTime={elapsedTime} />;
       case 'reviewing':
-        return <ProgressPanel task={task} currentStage={currentStage} elapsedTime={elapsedTime} />;
+        return <ProgressPanel task={task} isParsing={task.status === 'uploaded' || task.status === 'parsing'} currentStage={currentStage} elapsedTime={elapsedTime} />;
+      case 'pending_review':
+        // AI审查已完成，进入人工审核阶段
+        return <PendingReviewPanel taskId={task.id} />;
       case 'parse_failed':
         return <FailedPanel task={task} type="parse" />;
       case 'review_failed':
         return <FailedPanel task={task} type="review" />;
-      case 'pending_review':
       case 'human_reviewing':
         return <PendingReviewPanel taskId={task.id} />;
       case 'report_ready':
-        return <ReportReadyPanel task={task} />;
+        return (
+          <div className="bg-white border border-green-200 rounded-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-green-700">全部审查已完成</h3>
+            </div>
+            <div className="flex items-center justify-between mb-6">
+              {STAGES.map((stage, i) => (
+                <div key={stage.name} className="flex flex-col items-center flex-1">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium mb-2 bg-green-500 text-white">
+                    ✓
+                  </div>
+                  <span className="text-[0.75rem] text-center text-green-600">{stage.name}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between mb-6 px-2">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div key={i} className="flex-1 h-0.5 mx-1">
+                  {i < 4 && <div className="h-full bg-green-500 rounded" />}
+                </div>
+              ))}
+            </div>
+            <div className="h-3 bg-green-100 rounded-full overflow-hidden mb-4">
+              <div className="h-full bg-green-500 rounded-full" style={{ width: '100%' }} />
+            </div>
+            <div className="bg-green-50 rounded-lg p-3 text-[0.8125rem] text-green-700 mb-4">
+              ✓ 审查全部完成，共发现 {task.risk_count || 0} 项风险，报告已可导出
+            </div>
+            <button
+              onClick={async () => {
+                try {
+                  // 1. Generate report
+                  await generateReportApi(task.id);
+                  // 2. Download report
+                  const blob = await downloadReportBlob(task.id);
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `review_report_${task.id}.pdf`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  toast.success('报告下载成功');
+                } catch (err: any) {
+                  toast.error(`下载失败: ${err.message}`);
+                }
+              }}
+              className="flex items-center gap-2 px-5 py-2.5 text-[0.875rem] bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity"
+            >
+              <Download className="w-4 h-4" /> 下载 PDF 报告
+            </button>
+          </div>
+        );
       case 'cancelled':
         return (
           <div className="bg-white border border-gray-200 rounded-xl p-6 text-center">

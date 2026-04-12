@@ -75,12 +75,12 @@ async def run_review_workflow(task_id: str):
 
         task.status = "parsing"
         task.progress = 5
-        task.current_stage = "文档解析"
+        task.current_stage = "文档上传"
         await db.flush()
         await db.refresh(task)
         print(f"[workflow] Task {task_id} -> parsing")
 
-    await _emit_event(task_id, "status_change", {"status": "parsing", "progress": 5, "current_stage": "文档解析"})
+    await _emit_event(task_id, "status_change", {"status": "parsing", "progress": 5, "current_stage": "文档上传"})
 
     try:
         # Step 2: parse_doc
@@ -89,8 +89,9 @@ async def run_review_workflow(task_id: str):
         result = await parse_doc(state)
 
         async with async_session() as db:
-            await _update_task(db, task_id, progress=25, current_stage="解析完成")
-        await _emit_event(task_id, "stage_complete", {"stage": "parse_doc", "progress": 25, "current_stage": "条款提取"})
+            await _update_task(db, task_id, progress=20, current_stage="文档解析")
+            await db.commit()
+        await _emit_event(task_id, "stage_complete", {"stage": "parse_doc", "progress": 20, "current_stage": "文档解析"})
 
         if result.get("error_message"):
             raise RuntimeError(result["error_message"])
@@ -104,8 +105,9 @@ async def run_review_workflow(task_id: str):
         state.update(result)
 
         async with async_session() as db:
-            await _update_task(db, task_id, progress=35, current_stage="条款提取")
-        await _emit_event(task_id, "stage_complete", {"stage": "extract_clauses", "progress": 35, "current_stage": "风险识别"})
+            await _update_task(db, task_id, progress=40, current_stage="条款提取")
+            await db.commit()
+        await _emit_event(task_id, "stage_complete", {"stage": "extract_clauses", "progress": 40, "current_stage": "条款提取"})
 
         print(f"[workflow] {task_id}: extracted {len(state['clauses'])} clauses")
 
@@ -117,6 +119,17 @@ async def run_review_workflow(task_id: str):
         risks: List[Dict[str, Any]] = result.get("risk_items", [])
 
         print(f"[workflow] {task_id}: identified {len(risks)} risk items")
+
+        # Save progress to DB before emitting event
+        async with async_session() as db:
+            await _update_task(db, task_id, progress=60, current_stage="风险识别")
+            await db.commit()
+        # Emit risk analysis complete event
+        await _emit_event(task_id, "stage_complete", {
+            "stage": "analyze_risks",
+            "progress": 60,
+            "current_stage": "风险识别",
+        })
 
         # Step 5: Save risk items to DB + update task
         async with async_session() as db:
@@ -138,7 +151,7 @@ async def run_review_workflow(task_id: str):
             await _update_task(
                 db, task_id,
                 status="pending_review",
-                progress=100,
+                progress=80,
                 current_stage="待人工审核",
                 risk_count=len(risks),
             )
@@ -146,7 +159,7 @@ async def run_review_workflow(task_id: str):
 
         await _emit_event(task_id, "ai_complete", {
             "risk_count": len(risks),
-            "progress": 100,
+            "progress": 80,
             "current_stage": "待人工审核",
         })
 
@@ -201,13 +214,19 @@ async def check_and_finalize_review(task_id: str):
         pending_high = pending_count.scalar() or 0
 
         if pending_high == 0 and task.status in ("pending_review", "human_reviewing"):
+            # Emit human review complete event before transitioning
+            await _emit_event(task_id, "stage_complete", {
+                "stage": "human_review",
+                "progress": 95,
+                "current_stage": "人工审核",
+            })
             # All high risks reviewed -> report_ready
             task.status = "report_ready"
             task.progress = 100
-            task.current_stage = "报告可导出"
+            task.current_stage = "报告生成"
             task.completed_at = __import__("datetime").datetime.now(
                 __import__("datetime").timezone.utc
             )
             await db.commit()
-            await _emit_event(task_id, "status_change", {"status": "report_ready"})
+            await _emit_event(task_id, "status_change", {"status": "report_ready", "progress": 100, "current_stage": "报告生成"})
             print(f"[workflow] {task_id} -> report_ready")

@@ -1,6 +1,6 @@
-# 后端架构设计总览 v1.0
+# 后端架构设计总览 v1.1
 
-> 版本：v1.0 | 日期：2026-04-09
+> 版本：v1.1 | 日期：2026-04-13（基于实际实现更新）
 > 阶段：06_architecture
 > 作者：Backend Architecture Team (Agent Teams)
 > 前置文档：docs/04_interaction_design/、docs/05_prototype_spec/、docs/06_architecture/frontend_backend_boundary_spec-v1.0.md
@@ -80,11 +80,10 @@
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
-| HITL 机制 | `interrupt()` 函数 | 动态中断，适配可变风险项数 |
-| 恢复方式 | `Command(resume=...)` | 官方推荐，支持 JSON 值 |
-| 路由控制 | `Command(goto=...)` | 根据审核结果动态路由 |
-| 中断值格式 | `{"type": "...", "context": {...}}` | 前端按 type 渲染 UI |
-| 副作用处理 | interrupt 前幂等 | 恢复时节点重头执行 |
+| 流程编排 | 纯 Python 异步工作流 (workflow_service.py) | MVP 阶段无需 LangGraph HITL，简化实现 |
+| HITL 方式 | REST API（人工提交审核结果） | 前端通过 PUT/POST 接口提交单条/批量审核 |
+| 状态驱动 | 高风险全部处理后自动推进至 report_ready | check_and_finalize_review() 检查后触发 |
+| 进度推送 | SSE + 前端 1.5s 轮询降级 | 混合方案，保证进度可见 |
 
 ### 4. 审查结果查询
 
@@ -96,65 +95,82 @@
 
 ---
 
-## 完整 API 列表
+## 完整 API 列表（实际已实现 12 个）
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/v1/tasks/upload` | 上传合同文件 |
-| GET | `/api/v1/tasks/{task_id}` | 查询任务状态 |
-| GET | `/api/v1/tasks` | 查询任务列表 |
-| POST | `/api/v1/tasks/{task_id}/cancel` | 取消任务 |
-| GET | `/api/v1/tasks/{task_id}/stream` | SSE 进度推送 |
-| GET | `/api/v1/tasks/{task_id}/result` | 获取审查结果 |
-| GET | `/api/v1/tasks/{task_id}/risks/{risk_id}` | 获取风险项详情 |
-| PUT | `/api/v1/tasks/{task_id}/risks/{risk_id}/review` | 提交人工审核 |
-| GET | `/api/v1/tasks/{task_id}/report` | 导出 PDF 报告 |
+| # | 方法 | 路径 | 说明 |
+|---|------|------|------|
+| 1 | POST | `/api/v1/tasks/upload` | 上传合同文件 |
+| 2 | GET | `/api/v1/tasks/{task_id}` | 查询任务状态 |
+| 3 | GET | `/api/v1/tasks` | 查询任务列表 |
+| 4 | POST | `/api/v1/tasks/{task_id}/cancel` | 取消任务 |
+| 5 | GET | `/api/v1/tasks/{task_id}/stream` | SSE 进度推送 |
+| 6 | GET | `/api/v1/tasks/{task_id}/result` | 获取审查结果（风险项列表） |
+| 7 | GET | `/api/v1/tasks/{task_id}/risks/{risk_id}` | 获取风险项详情 |
+| 8 | PUT | `/api/v1/tasks/{task_id}/risks/{risk_id}/review` | 提交单条人工审核 |
+| 9 | POST | `/api/v1/tasks/{task_id}/reviews/batch` | 批量审核（批量确认/驳回） |
+| 10 | POST | `/api/v1/tasks/{task_id}/report/generate` | 生成 PDF 报告 |
+| 11 | GET | `/api/v1/tasks/{task_id}/report` | 下载 PDF 报告 |
+| 12 | GET | `/api/v1/tasks/{task_id}/auditlog` | 查询操作审计日志 |
 
 ---
 
 ## LangGraph 审查图概要
 
+> **注意（v1.1 更新）**：MVP 实现中未使用 LangGraph HITL，而是采用纯 Python 异步工作流。工作流由 `workflow_service.py` 中的 `run_review_workflow()` 顺序执行各阶段节点。
+
+### 实际工作流 (workflow_service.py)
+
 ```
-START → parse_doc → extract_clauses → analyze_risks → hitl_review
-                                                              │
-                                                       (interrupt)
-                                                              │
-                                                    Command(resume=decisions)
-                                                              │
-                                         ┌────────────────────┤
-                                  (有修改)│              (无修改)│
-                                         ▼                    ▼
-                                  apply_decisions        gen_report
-                                         │
-                                  gen_report
-                                         │
-                                        END
+run_review_workflow(task_id)
+   ├── uploaded → parsing  (progress=5, current_stage="文档上传")
+   │    ├── parse_doc()         (progress=20, current_stage="文档解析")
+   │    ├── extract_clauses()   (progress=40, current_stage="条款提取")
+   │    └── analyze_risks()     (progress=60, current_stage="风险识别")
+   │         └── 保存 RiskItem → pending_review (progress=80, current_stage="待人工审核")
+   │
+   └── 异常: review_failed
 ```
 
-**关键中断点**：
-1. **风险审核**（必需）：AI 识别风险后，暂停等待人工审核
-2. **报告确认**（可选）：报告生成前最终确认
-3. **工具审批**（高级）：外部数据库查询前审批
+### 人工审核完成检查 (check_and_finalize_review)
+
+```
+高风险全部处理完毕
+   └── stage_complete(human_review, progress=95)
+        └── report_ready (progress=100, current_stage="报告生成")
+```
+
+### SSE 事件类型
+
+| 事件 | 触发时机 | 关键字段 |
+|------|---------|---------|
+| `status_change` | 状态切换 | `status`, `progress`, `current_stage` |
+| `stage_complete` | 每个阶段完成 | `stage`, `progress`, `current_stage` |
+| `ai_complete` | AI 审查完成进入待审核 | `risk_count`, `progress`, `current_stage` |
+| `error` | 工作流报错 | `message`, `current_stage` |
 
 ---
 
 ## 状态机完整流转
 
 ```
-uploaded → parsing → parse_complete → reviewing → pending_review
-                                                    │
-                                         ┌──────────┤
-                                    (人工审核)      │
-                                         ▼          │
-                                   human_reviewing  │
-                                         │          │
-                                  report_ready ◄────┘
-
+uploaded → parsing → pending_review → human_reviewing → report_ready
+                  ↘ (AI 各阶段进度通过 current_stage 字段区分)
+                                                    ↗
 异常分支：
-  parsing → parse_failed
-  reviewing → review_failed
-  any → cancelled
+  parsing → review_failed（parse/analyze 任一失败）
+  any → cancelled（用户取消）
 ```
+
+### 6 阶段进度设计
+
+| 阶段 | status | progress | current_stage |
+|------|--------|----------|---------------|
+| ① 文档上传 | `parsing` | 5% | 文档上传 |
+| ② 文档解析 | `parsing` | 20% | 文档解析 |
+| ③ 条款提取 | `parsing` | 40% | 条款提取 |
+| ④ 风险识别 | `parsing` | 60% | 风险识别 |
+| ⑤ 人工审核 | `pending_review` / `human_reviewing` | 80% | 待人工审核 |
+| ⑥ 报告生成 | `report_ready` | 100% | 报告生成 |
 
 ---
 
